@@ -82,3 +82,8 @@ http://localhost:3000
 - `docs/ARCHITECTURE.md`
 - `docs/MOD_HOOKS.md`
 - `docs/RENDER_DEPLOY.md`
+
+
+## Render hotfix v10
+
+Production-клиент больше не обращается к `localhost:3000`. На Render API используется через текущий домен сервиса: `/api/...`, а Socket.IO — через `window.location.origin`.
