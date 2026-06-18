@@ -73,9 +73,15 @@ setInterval(() => {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const clientDist = path.resolve(__dirname, '../../client-dist');
+const clientDistCandidates = [
+  // Production build copies the Vite bundle here: game/server/client-dist
+  path.resolve(__dirname, '../client-dist'),
+  // Backward compatibility for older local builds.
+  path.resolve(__dirname, '../../client-dist')
+];
+const clientDist = clientDistCandidates.find((candidate) => fs.existsSync(path.join(candidate, 'index.html')));
 
-if (process.env.SERVE_CLIENT !== 'false' && fs.existsSync(clientDist)) {
+if (process.env.SERVE_CLIENT !== 'false' && clientDist) {
   await app.register(fastifyStatic, {
     root: clientDist,
     prefix: '/',
@@ -88,6 +94,8 @@ if (process.env.SERVE_CLIENT !== 'false' && fs.existsSync(clientDist)) {
     }
     return reply.sendFile('index.html');
   });
+} else if (process.env.SERVE_CLIENT !== 'false') {
+  app.log.warn({ clientDistCandidates }, 'Client build was not found. Only API routes will be available.');
 }
 
 const port = Number(process.env.PORT ?? 3000);
