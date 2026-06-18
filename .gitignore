@@ -1,1 +1,3 @@
 game/node_modules
+docs/
+game/server/.data/local-db.json

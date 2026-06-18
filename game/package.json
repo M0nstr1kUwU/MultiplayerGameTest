@@ -1,18 +1,19 @@
 {
-  "name": "game",
-  "version": "0.0.1",
-  "main": "index.js",
+  "name": "multiplayer-soul-knight-3d",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "start": "node server/server.js"
+    "install:all": "npm install --workspaces",
+    "dev": "concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "start": "npm run start -w server",
+    "build": "npm run build -w client && node scripts/copy-client-dist.js"
   },
-  "keywords": [],
-  "author": "M0nstr1kUwU",
-  "license": "ISC",
-  "description": "Mini-game multiplayer",
-  "dependencies": {
-    "fastify": "^5.8.5",
-    "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3",
-    "three": "^0.184.0"
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   }
 }

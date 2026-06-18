@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: soul-knight-3d-postgres
+    environment:
+      POSTGRES_DB: soul_knight_3d
+      POSTGRES_USER: soul
+      POSTGRES_PASSWORD: soul_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+volumes:
+  pg_data:
