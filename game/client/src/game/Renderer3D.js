@@ -42,8 +42,8 @@ export class Renderer3D {
     this.crateMeshes = new Map();
     this.dropMeshes = new Map();
     this.labels = new Map();
-    this.projectileMeshes = [];
-    this.telegraphMeshes = [];
+    this.projectileMeshes = new Map();
+    this.telegraphMeshes = new Map();
     this.doorMeshes = [];
     this.mapGroup = new THREE.Group();
     this.scene.add(this.mapGroup);
@@ -51,14 +51,20 @@ export class Renderer3D {
     this.raycaster = new THREE.Raycaster();
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.mapKey = '';
+    this.destroyed = false;
+    this.animationFrameId = null;
+    this.lastLabelHtmlUpdate = 0;
+
+    this.onResize = () => this.resize();
+    this.onMouseMove = (event) => {
+      this.pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+      this.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    };
 
     this.createLights();
     this.rebuildArena({ type: 'menu' });
-    window.addEventListener('resize', () => this.resize());
-    window.addEventListener('mousemove', (event) => {
-      this.pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-      this.pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
-    });
+    window.addEventListener('resize', this.onResize);
+    window.addEventListener('mousemove', this.onMouseMove);
     this.animate();
   }
 
@@ -280,38 +286,57 @@ export class Renderer3D {
   }
 
   syncProjectiles(projectiles) {
-    for (const mesh of this.projectileMeshes) {
-      this.scene.remove(mesh);
-      disposeObject(mesh);
+    const ids = new Set(projectiles.map((projectile) => projectile.id));
+    for (const [id, mesh] of this.projectileMeshes) {
+      if (!ids.has(id)) {
+        this.scene.remove(mesh);
+        disposeObject(mesh);
+        this.projectileMeshes.delete(id);
+      }
     }
-    this.projectileMeshes = [];
-    for (const projectile of projectiles) this.addProjectile(projectile);
+    for (const projectile of projectiles) this.upsertProjectile(projectile);
   }
 
   syncTelegraphs(telegraphs) {
-    for (const mesh of this.telegraphMeshes) {
-      this.scene.remove(mesh);
-      disposeObject(mesh);
+    const ids = new Set(telegraphs.map((telegraph) => telegraph.id));
+    for (const [id, mesh] of this.telegraphMeshes) {
+      if (!ids.has(id)) {
+        this.scene.remove(mesh);
+        disposeObject(mesh);
+        this.telegraphMeshes.delete(id);
+      }
     }
-    this.telegraphMeshes = [];
-    for (const telegraph of telegraphs) this.addTelegraph(telegraph);
+    for (const telegraph of telegraphs) this.upsertTelegraph(telegraph);
   }
 
-  addTelegraph(telegraph) {
+  createTelegraphMesh(telegraph) {
     const color = colorFromString(telegraph.color, 0xff4f70);
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.28, depthWrite: false });
-    let mesh;
+    if (telegraph.type === 'line') return new THREE.Mesh(new THREE.BoxGeometry(telegraph.length ?? 16, 0.04, (telegraph.width ?? 2) * 2), mat);
+    const mesh = new THREE.Mesh(new THREE.CircleGeometry(telegraph.radius ?? 3, 32), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    return mesh;
+  }
+
+  upsertTelegraph(telegraph) {
+    let mesh = this.telegraphMeshes.get(telegraph.id);
+    if (!mesh || mesh.userData.type !== telegraph.type) {
+      if (mesh) {
+        this.scene.remove(mesh);
+        disposeObject(mesh);
+      }
+      mesh = this.createTelegraphMesh(telegraph);
+      mesh.userData.type = telegraph.type;
+      this.telegraphMeshes.set(telegraph.id, mesh);
+      this.scene.add(mesh);
+    }
     if (telegraph.type === 'line') {
-      mesh = new THREE.Mesh(new THREE.BoxGeometry(telegraph.length ?? 16, 0.04, (telegraph.width ?? 2) * 2), mat);
-      mesh.position.set(telegraph.x + Math.cos(telegraph.angle) * (telegraph.length ?? 16) / 2, 0.05, telegraph.z + Math.sin(telegraph.angle) * (telegraph.length ?? 16) / 2);
+      const length = telegraph.length ?? 16;
+      mesh.position.set(telegraph.x + Math.cos(telegraph.angle) * length / 2, 0.05, telegraph.z + Math.sin(telegraph.angle) * length / 2);
       mesh.rotation.y = -telegraph.angle;
     } else {
-      mesh = new THREE.Mesh(new THREE.CircleGeometry(telegraph.radius ?? 3, 40), mat);
       mesh.position.set(telegraph.x, 0.06, telegraph.z);
-      mesh.rotation.x = -Math.PI / 2;
     }
-    this.telegraphMeshes.push(mesh);
-    this.scene.add(mesh);
   }
 
   syncPortal(portal) {
@@ -477,12 +502,18 @@ export class Renderer3D {
     this.setLabel(drop.id, () => `<b>${labelText}</b><small>E — подобрать</small>`, mesh, 1.2);
   }
 
-  addProjectile(projectile) {
-    const pColor = colorFromString(projectile.color, projectile.enemy ? 0xff6d8c : 0xffffff);
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(projectile.enemy ? 0.25 : 0.18, 12, 12), new THREE.MeshStandardMaterial({ color: pColor, emissive: projectile.enemy ? 0x33111a : 0x222222 }));
+  upsertProjectile(projectile) {
+    let mesh = this.projectileMeshes.get(projectile.id);
+    if (!mesh) {
+      const pColor = colorFromString(projectile.color, projectile.enemy ? 0xff6d8c : 0xffffff);
+      mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(projectile.enemy ? 0.22 : 0.16, 10, 10),
+        new THREE.MeshStandardMaterial({ color: pColor, emissive: projectile.enemy ? 0x33111a : 0x222222 })
+      );
+      this.projectileMeshes.set(projectile.id, mesh);
+      this.scene.add(mesh);
+    }
     mesh.position.set(projectile.x, 0.45, projectile.z);
-    this.projectileMeshes.push(mesh);
-    this.scene.add(mesh);
   }
 
   deleteLabel(id) {
@@ -508,6 +539,9 @@ export class Renderer3D {
 
   updateLabels(myId) {
     const vector = new THREE.Vector3();
+    const now = performance.now();
+    const shouldRefreshHtml = now - this.lastLabelHtmlUpdate > 100;
+    if (shouldRefreshHtml) this.lastLabelHtmlUpdate = now;
     for (const [id, label] of this.labels) {
       if (!label.mesh.visible) {
         label.el.style.display = 'none';
@@ -519,12 +553,19 @@ export class Renderer3D {
       const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
       const y = (-vector.y * 0.5 + 0.5) * window.innerHeight;
       label.el.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
-      label.el.innerHTML = label.htmlFactory(myId);
+      if (shouldRefreshHtml) {
+        const html = label.htmlFactory(myId);
+        if (label.lastHtml !== html) {
+          label.el.innerHTML = html;
+          label.lastHtml = html;
+        }
+      }
     }
   }
 
   animate() {
-    requestAnimationFrame(() => this.animate());
+    if (this.destroyed) return;
+    this.animationFrameId = requestAnimationFrame(() => this.animate());
     if (this.portalMesh) this.portalMesh.rotation.z += 0.015;
     for (const door of this.doorMeshes) {
       door.position.x += ((door.userData.targetX ?? door.position.x) - door.position.x) * 0.08;
@@ -533,11 +574,39 @@ export class Renderer3D {
       door.rotation.y += ((door.userData.targetRotY ?? door.rotation.y) - door.rotation.y) * 0.08;
     }
     if (this.visible) this.renderer.render(this.scene, this.camera);
-    if (this.latestState) this.updateLabels();
+    if (this.visible && this.latestState) this.updateLabels();
+  }
+
+  clearWorld() {
+    this.clearGroup(this.mapGroup);
+    for (const [id, mesh] of this.playerMeshes) this.removeObject(id, mesh, this.playerMeshes);
+    for (const [id, mesh] of this.enemyMeshes) this.removeObject(id, mesh, this.enemyMeshes);
+    for (const [id, mesh] of this.crateMeshes) this.removeObject(id, mesh, this.crateMeshes);
+    for (const [id, mesh] of this.dropMeshes) this.removeObject(id, mesh, this.dropMeshes);
+    for (const [id, mesh] of this.projectileMeshes) { this.scene.remove(mesh); disposeObject(mesh); }
+    for (const [id, mesh] of this.telegraphMeshes) { this.scene.remove(mesh); disposeObject(mesh); }
+    this.projectileMeshes.clear();
+    this.telegraphMeshes.clear();
+    if (this.portalMesh) {
+      this.scene.remove(this.portalMesh);
+      disposeObject(this.portalMesh);
+      this.portalMesh = null;
+    }
+    for (const label of this.labels.values()) label.el.remove();
+    this.labels.clear();
+    this.latestState = null;
+    this.mapKey = '';
   }
 
   destroy() {
+    this.destroyed = true;
+    if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+    window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('mousemove', this.onMouseMove);
+    this.clearWorld();
+    disposeObject(this.scene);
     this.renderer.dispose();
-    this.root.innerHTML = '';
+    this.renderer.domElement.remove();
+    this.labelsLayer.remove();
   }
 }

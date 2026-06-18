@@ -67,6 +67,7 @@ export function createLobbyView(root, socket, me, options = {}) {
   let scoreboardOpen = false;
   let style = loadLocalStyle();
   let menuTab = 'lobbies';
+  let lastGameRender = 0;
   let minimapSettings = loadMinimapSettings();
 
   const minimapListener = (event) => {
@@ -404,10 +405,22 @@ export function createLobbyView(root, socket, me, options = {}) {
     setWorldState(state) {
       latestWorld = state;
       currentLobby = state?.lobby ?? currentLobby;
+      if (currentLobby?.status === 'playing') {
+        const now = performance.now();
+        if (now - lastGameRender < 100) return;
+        lastGameRender = now;
+      }
       render();
     },
     setScoreboardOpen(value) {
       scoreboardOpen = Boolean(value);
+      render();
+    },
+    leaveLocal() {
+      currentLobby = null;
+      latestWorld = null;
+      scoreboardOpen = false;
+      message = '';
       render();
     },
     destroy: () => { window.removeEventListener('minimap:settings', minimapListener); panel.remove(); }

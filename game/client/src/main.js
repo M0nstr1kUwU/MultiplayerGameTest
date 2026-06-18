@@ -83,8 +83,13 @@ function renderSettings() {
   settingsEl.querySelector('#minimap-x')?.addEventListener('input', saveMinimap);
   settingsEl.querySelector('#minimap-y')?.addEventListener('input', saveMinimap);
   settingsEl.querySelector('#leave-game')?.addEventListener('click', () => {
-    socket?.emit('lobby:leave', () => null);
-    setSettingsOpen(false);
+    socket?.emit('lobby:leave', () => {
+      canSendInput = false;
+      renderer?.setVisible(false);
+      renderer?.clearWorld?.();
+      lobbyView?.leaveLocal?.();
+      setSettingsOpen(false);
+    });
   });
   settingsEl.querySelectorAll('.bind').forEach((button) => {
     button.addEventListener('click', () => {
@@ -137,7 +142,8 @@ function startGameSession(user) {
     const playing = state?.lobby?.status === 'playing';
     canSendInput = playing && !settingsOpen;
     renderer.setVisible(playing);
-    renderer.setWorldState(state, me.id);
+    if (playing) renderer.setWorldState(state, me.id);
+    else renderer.clearWorld?.();
     lobbyView?.setWorldState(state);
   });
 

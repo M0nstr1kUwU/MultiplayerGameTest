@@ -85,14 +85,27 @@ if (process.env.SERVE_CLIENT !== 'false' && clientDist) {
   await app.register(fastifyStatic, {
     root: clientDist,
     prefix: '/',
-    decorateReply: false
+    index: ['index.html'],
+    decorateReply: true,
+    maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0
   });
 
+  const sendIndex = (reply) => {
+    const indexPath = path.join(clientDist, 'index.html');
+    return reply.type('text/html; charset=utf-8').send(fs.createReadStream(indexPath));
+  };
+
   app.setNotFoundHandler((request, reply) => {
-    if (request.raw.url?.startsWith('/api/') || request.raw.url?.startsWith('/socket.io/')) {
+    const url = request.raw.url ?? '';
+    if (url.startsWith('/api/') || url.startsWith('/socket.io/')) {
       return reply.code(404).send({ ok: false, message: 'Не найдено' });
     }
-    return reply.sendFile('index.html');
+    // Missing optional game assets must stay cheap 404s.
+    // Previously they fell through to the SPA fallback and caused 500 spam on Render.
+    if (url.startsWith('/assets/')) {
+      return reply.code(404).type('text/plain; charset=utf-8').send('');
+    }
+    return sendIndex(reply);
   });
 } else if (process.env.SERVE_CLIENT !== 'false') {
   app.log.warn({ clientDistCandidates }, 'Client build was not found. Only API routes will be available.');
