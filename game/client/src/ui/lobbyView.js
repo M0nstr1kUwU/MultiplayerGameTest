@@ -54,6 +54,14 @@ function weaponLine(weapon, index, active) {
   return `<div class="slot ${active ? 'active' : ''}">${icon}<span>${index + 1}. ${escapeHtml(weapon.name)}${ammo}${reload}</span></div>`;
 }
 
+function weaponSlotLine(weapon, index, active) {
+  if (!weapon) return `<div class="slot ${active ? 'active' : ''}"><span>${index + 1}. пусто</span></div>`;
+  const icon = weapon.icon ? `<img class="slot-icon" src="${escapeHtml(weapon.icon)}" alt="">` : '';
+  const level = weapon.level ? ` Lv.${weapon.level}` : '';
+  const type = weapon.kind === 'gun' ? weapon.ammoType : 'melee';
+  return `<div class="slot ${active ? 'active' : ''}">${icon}<span>${index + 1}. ${escapeHtml(weapon.name)}${level} · ${escapeHtml(type)}</span></div>`;
+}
+
 export function createLobbyView(root, socket, me, options = {}) {
   const panel = document.createElement('div');
   panel.className = 'hud';
@@ -69,6 +77,16 @@ export function createLobbyView(root, socket, me, options = {}) {
   let menuTab = 'lobbies';
   let lastGameRender = 0;
   let minimapSettings = loadMinimapSettings();
+  let gameHudCache = {};
+  let currentView = '';
+
+  function setView(view) {
+    if (currentView === view) return false;
+    currentView = view;
+    gameHudCache = {};
+    panel.innerHTML = '';
+    return true;
+  }
 
   const minimapListener = (event) => {
     minimapSettings = event.detail ?? loadMinimapSettings();
@@ -148,6 +166,7 @@ export function createLobbyView(root, socket, me, options = {}) {
   }
 
   function renderMenu() {
+    setView('menu');
     panel.innerHTML = `
       <div class="panel side-left">
         <div class="panel-header">
@@ -210,6 +229,7 @@ export function createLobbyView(root, socket, me, options = {}) {
   }
 
   function renderLobbyOnly() {
+    setView('lobby');
     const isLeader = currentLobby.leaderId === String(me.id);
     const canEdit = isLeader && currentLobby.status === 'lobby';
     panel.innerHTML = `
@@ -258,21 +278,120 @@ export function createLobbyView(root, socket, me, options = {}) {
   }
 
   function renderGameHud() {
+    setView('game');
+    ensureGameHudLayout();
+    updateGameHud();
+  }
+
+  function ensureGameHudLayout() {
+    if (panel.querySelector('.game-hud-root')) return;
+    panel.innerHTML = `
+      <div class="game-hud-root">
+        <div id="game-top" class="game-top"></div>
+        <div id="game-bottom" class="game-bottom"><div class="player-hud">
+          <div class="hp-big"><span id="hud-hp-bar"></span></div>
+          <div class="row"><b id="hud-hp-text"></b><span id="hud-ability-text"></span></div>
+          <div id="hud-weapon-slots" class="weapon-slots"></div>
+          <div id="hud-ammo-line" class="ammo-line"></div>
+          <div id="hud-note" class="hud-note"></div>
+        </div></div>
+        <div id="minimap-slot"></div>
+        <div id="upgrade-slot"></div>
+        <div id="scoreboard-slot"></div>
+        <div id="toast-slot"></div>
+      </div>
+    `;
+  }
+
+  function updateGameHud() {
     const myId = String(me.id);
     const player = latestWorld?.players?.find((p) => p.id === myId);
     const mode = latestWorld?.mode ?? {};
-    panel.innerHTML = `
-      <div class="game-top">
-        <div class="chip">${modeTitle(currentLobby.mode)}</div>
-        ${mode.type === 'pve' ? `<div class="chip">Уровень ${mode.level ?? 1}</div><div class="chip">Комната ${(mode.roomIndex ?? 0) + 1}/${mode.rooms?.length ?? currentLobby.settings?.pveRooms ?? '?'}</div><div class="chip">${escapeHtml(mode.currentRoom?.name ?? '')}</div>${renderPortalChip(mode.portal)}` : `<div class="chip">Раунд ${mode.round ?? 1}</div><div class="chip">Побед до ${mode.targetWins ?? 5}</div>`}
-      </div>
-      <div class="game-bottom">${player ? renderPlayerHud(player) : ''}</div>
-      ${mode.type === 'pve' ? renderMinimap(mode) : ''}
-      ${player?.pendingUpgrades?.length ? renderUpgradeOverlay(player.pendingUpgrades) : ''}
-      ${scoreboardOpen ? renderScoreboard() : ''}
-      ${message ? `<div class="toast">${escapeHtml(message)}</div>` : ''}
-    `;
-    attachKickHandlers();
+
+    const topHtml = mode.type === 'pve'
+      ? `<div class="chip">${modeTitle(currentLobby.mode)}</div><div class="chip">Уровень ${mode.level ?? 1}</div><div class="chip">Комната ${(mode.roomIndex ?? 0) + 1}/${mode.rooms?.length ?? currentLobby.settings?.pveRooms ?? '?'}</div><div class="chip">${escapeHtml(mode.currentRoom?.name ?? '')}</div>${renderDoorTransitionChip(mode.doorTransition)}${renderPortalChip(mode.portal)}`
+      : `<div class="chip">${modeTitle(currentLobby.mode)}</div><div class="chip">Раунд ${mode.round ?? 1}</div><div class="chip">Побед до ${mode.targetWins ?? 5}</div>`;
+    setHtmlIfChanged('top', '#game-top', topHtml);
+
+    if (player) updatePlayerHudParts(player);
+
+    const minimapHtml = mode.type === 'pve' ? renderMinimap(mode) : '';
+    setHtmlIfChanged('minimap', '#minimap-slot', minimapHtml);
+
+    const upgradesKey = JSON.stringify((player?.pendingUpgrades ?? []).map((choice) => choice.choiceId));
+    if (gameHudCache.upgradesKey !== upgradesKey) {
+      gameHudCache.upgradesKey = upgradesKey;
+      panel.querySelector('#upgrade-slot').innerHTML = player?.pendingUpgrades?.length ? renderUpgradeOverlay(player.pendingUpgrades) : '';
+    }
+
+    const scoreboardHtml = scoreboardOpen ? renderScoreboard() : '';
+    if (setHtmlIfChanged('scoreboard', '#scoreboard-slot', scoreboardHtml)) attachKickHandlers();
+    setHtmlIfChanged('toast', '#toast-slot', message ? `<div class="toast">${escapeHtml(message)}</div>` : '');
+  }
+
+  function setHtmlIfChanged(key, selector, html) {
+    if (gameHudCache[key] === html) return false;
+    gameHudCache[key] = html;
+    const el = panel.querySelector(selector);
+    if (el) el.innerHTML = html;
+    return true;
+  }
+
+  function inventorySignature(player) {
+    return JSON.stringify({
+      activeSlot: player.activeSlot,
+      weapons: (player.weapons ?? []).map((weapon) => weapon ? {
+        id: weapon.id,
+        type: weapon.type,
+        name: weapon.name,
+        level: weapon.level,
+        kind: weapon.kind,
+        ammoType: weapon.ammoType,
+        icon: weapon.icon
+      } : null)
+    });
+  }
+
+  function ammoSignature(player) {
+    const weapon = player.weapons?.[player.activeSlot];
+    return JSON.stringify({
+      activeSlot: player.activeSlot,
+      magazine: weapon?.magazine ?? null,
+      reloadTimer: weapon?.reloadTimer ? Math.ceil(weapon.reloadTimer * 10) / 10 : 0,
+      magazines: player.magazines ?? {}
+    });
+  }
+
+  function updateText(selector, value) {
+    const el = panel.querySelector(selector);
+    if (el && el.textContent !== value) el.textContent = value;
+  }
+
+  function updatePlayerHudParts(player) {
+    const hpPct = Math.max(0, Math.min(100, (player.hp / Math.max(1, player.maxHp)) * 100));
+    const hpBar = panel.querySelector('#hud-hp-bar');
+    const width = `${hpPct}%`;
+    if (hpBar && hpBar.style.width !== width) hpBar.style.width = width;
+    updateText('#hud-hp-text', `${player.hp}/${player.maxHp} HP`);
+    updateText('#hud-ability-text', player.ability ? `${player.ability.name}: ${player.ability.cooldown.toFixed(1)}с` : 'Способности нет');
+    updateText('#hud-note', player.downed ? 'Ты пал' : `Ресалки: ${player.revives ?? 0}`);
+
+    const invKey = inventorySignature(player);
+    if (gameHudCache.inventory !== invKey) {
+      gameHudCache.inventory = invKey;
+      const slots = panel.querySelector('#hud-weapon-slots');
+      if (slots) slots.innerHTML = player.weapons.map((weapon, index) => weaponSlotLine(weapon, index, index === player.activeSlot)).join('');
+    }
+
+    const ammoKey = ammoSignature(player);
+    if (gameHudCache.ammo !== ammoKey) {
+      gameHudCache.ammo = ammoKey;
+      const weapon = player.weapons?.[player.activeSlot];
+      const weaponText = weapon?.kind === 'gun'
+        ? `${weapon.name}: ${weapon.magazine}/${weapon.magSize}${weapon.reloadTimer > 0 ? ` · reload ${weapon.reloadTimer.toFixed(1)}с` : ''}`
+        : (weapon ? `${weapon.name}: ближний бой` : 'Без оружия');
+      updateText('#hud-ammo-line', `${weaponText} · light ${player.magazines.light ?? 0} · shell ${player.magazines.shell ?? 0} · energy ${player.magazines.energy ?? 0} · heavy ${player.magazines.heavy ?? 0}`);
+    }
   }
 
   function renderMinimap(mode) {
@@ -309,6 +428,12 @@ export function createLobbyView(root, socket, me, options = {}) {
       return `<span class="mini-room${current ? ' current' : ''}${lock}" style="left:${x}px;top:${y}px;background:${color}"></span>`;
     }).join('');
     return `<div class="minimap" style="right:${Number(minimapSettings.x ?? 16)}px;top:${Number(minimapSettings.y ?? 16)}px">${links.join('')}${items}</div>`;
+  }
+
+  function renderDoorTransitionChip(transition) {
+    if (!transition) return '';
+    const sideName = { north: 'север', south: 'юг', west: 'запад', east: 'восток' }[transition.side] ?? transition.side;
+    return `<div class="chip portal-chip">Дверь ${sideName}: ${Math.ceil(Number(transition.countdown ?? 1))}с</div>`;
   }
 
   function renderPortalChip(portal) {
@@ -407,7 +532,7 @@ export function createLobbyView(root, socket, me, options = {}) {
       currentLobby = state?.lobby ?? currentLobby;
       if (currentLobby?.status === 'playing') {
         const now = performance.now();
-        if (now - lastGameRender < 100) return;
+        if (now - lastGameRender < 50) return;
         lastGameRender = now;
       }
       render();

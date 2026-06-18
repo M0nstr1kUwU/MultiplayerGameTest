@@ -118,11 +118,13 @@ export class PvEMode {
     this.enemyProjectiles = [];
     this.crates = [];
     this.drops = [];
+    this.doorTransition = null;
     this.telegraphs = [];
     this.portal = null;
     this.finished = false;
     this.transitionLock = 0;
     this.transitionPhase = null;
+    this.doorTransition = null;
   }
 
   async start() {
@@ -244,6 +246,7 @@ export class PvEMode {
     this.portal = null;
     this.telegraphs = [];
     this.transitionPhase = null;
+    this.doorTransition = null;
   }
 
   async enterRoom(index, fromIndex = null) {
@@ -258,6 +261,7 @@ export class PvEMode {
     this.enemyProjectiles = [];
     this.crates = [];
     this.drops = [];
+    this.doorTransition = null;
 
     const spawn = this.spawnPointForRoom(room, fromIndex);
     let offset = -2;
@@ -373,9 +377,10 @@ export class PvEMode {
       player.z = clamp(player.z + (dz / length) * speed * dt, minZ, maxZ);
       player.rot = input.angle ?? player.rot;
       this.updateRevive(player, dt);
-      this.tryDoorTransition(player, room);
       if (input.shoot) this.tryAttack(player);
     }
+
+    this.updateDoorTransition(room, dt);
   }
 
   updateRevive(player, dt) {
@@ -496,30 +501,67 @@ export class PvEMode {
     }
   }
 
-  tryDoorTransition(player, room) {
-    if (this.transitionLock > 0 || !room.doorOpen) return;
-    const near = 2.0;
-    const gap = 3.4;
+  isPlayerAtDoor(player, room, side) {
+    const near = 2.15;
+    const gap = 4.0;
     const cx = room.center.x;
     const cz = room.center.z;
     const halfW = room.width / 2;
     const halfD = room.depth / 2;
-    const checks = [
-      ['east', player.x >= cx + halfW - near && Math.abs(player.z - cz) <= gap],
-      ['west', player.x <= cx - halfW + near && Math.abs(player.z - cz) <= gap],
-      ['south', player.z >= cz + halfD - near && Math.abs(player.x - cx) <= gap],
-      ['north', player.z <= cz - halfD + near && Math.abs(player.x - cx) <= gap]
-    ];
-    for (const [side, active] of checks) {
-      if (!active) continue;
+    if (side === 'east') return player.x >= cx + halfW - near && Math.abs(player.z - cz) <= gap;
+    if (side === 'west') return player.x <= cx - halfW + near && Math.abs(player.z - cz) <= gap;
+    if (side === 'south') return player.z >= cz + halfD - near && Math.abs(player.x - cx) <= gap;
+    if (side === 'north') return player.z <= cz - halfD + near && Math.abs(player.x - cx) <= gap;
+    return false;
+  }
+
+  updateDoorTransition(room, dt) {
+    if (this.transitionLock > 0 || !room?.doorOpen || this.transitionPhase) {
+      this.doorTransition = null;
+      return;
+    }
+
+    const living = alivePlayers(this.match.players);
+    if (!living.length) {
+      this.doorTransition = null;
+      return;
+    }
+
+    let ready = null;
+    for (const side of ['east', 'west', 'south', 'north']) {
       const nextIndex = room.neighbors?.[side];
       if (nextIndex == null) continue;
       const next = this.rooms[nextIndex];
       if (!next || next.locked) continue;
-      this.transitionLock = 0.85;
-      this.enterRoom(next.index, room.index);
+      if (living.every((player) => this.isPlayerAtDoor(player, room, side))) {
+        ready = { side, targetIndex: next.index };
+        break;
+      }
+    }
+
+    if (!ready) {
+      this.doorTransition = null;
       return;
     }
+
+    if (!this.doorTransition || this.doorTransition.side !== ready.side || this.doorTransition.targetIndex !== ready.targetIndex) {
+      this.doorTransition = {
+        side: ready.side,
+        targetIndex: ready.targetIndex,
+        fromIndex: room.index,
+        countdown: 1.0,
+        required: living.map((player) => player.id)
+      };
+      return;
+    }
+
+    this.doorTransition.countdown = Math.max(0, this.doorTransition.countdown - dt);
+    if (this.doorTransition.countdown > 0) return;
+
+    const transition = this.doorTransition;
+    this.doorTransition = null;
+    this.transitionLock = 0.85;
+    this.enterRoom(transition.targetIndex, transition.fromIndex);
   }
 
   allRequiredRoomsCleared() {
@@ -946,6 +988,7 @@ export class PvEMode {
       crates: this.crates,
       drops: this.drops.map((drop) => ({ ...drop, weapon: serializeWeapon(drop.weapon) })),
       portal: this.portal,
+      doorTransition: this.doorTransition ? { ...this.doorTransition, countdown: Number(Math.max(0, this.doorTransition.countdown).toFixed(2)) } : null,
       transitionPhase: this.transitionPhase
     };
   }

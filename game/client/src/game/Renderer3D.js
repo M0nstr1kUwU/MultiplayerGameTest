@@ -53,6 +53,7 @@ export class Renderer3D {
     this.mapKey = '';
     this.destroyed = false;
     this.animationFrameId = null;
+    this.worldCleared = false;
     this.lastLabelHtmlUpdate = 0;
 
     this.onResize = () => this.resize();
@@ -87,9 +88,8 @@ export class Renderer3D {
     const key = JSON.stringify({
       type: mode?.type,
       room: mode?.currentRoom?.id,
-      doors: mode?.currentRoom?.doors,
-      doorOpen: mode?.currentRoom?.doorOpen,
-      locked: mode?.currentRoom?.locked,
+      roomSize: mode?.currentRoom ? [mode.currentRoom.width, mode.currentRoom.depth] : null,
+      neighbors: mode?.currentRoom ? Object.keys(mode.currentRoom.neighbors ?? {}).sort() : null,
       theme: mode?.currentRoom?.theme?.id,
       level: mode?.level,
       arena: mode?.arena?.size
@@ -100,6 +100,7 @@ export class Renderer3D {
 
     if (mode?.type === 'pve' && mode.currentRoom) this.createRoom(mode.currentRoom);
     else this.createPvpArena(mode?.arena?.size ?? 42);
+    this.syncDoors(mode?.currentRoom?.doors ?? {});
   }
 
   createPvpArena(size) {
@@ -146,11 +147,7 @@ export class Renderer3D {
 
     const makeDoorLeaf = (side, x, z, offset, sign, isOpen, isLocked, horizontal) => {
       const leafWidth = doorGap / 2 - 0.16;
-      const mat = new THREE.MeshStandardMaterial({
-        color: isLocked ? 0x91526a : isOpen ? 0x5d8f72 : doorColor,
-        roughness: 0.78,
-        emissive: isOpen ? 0x102819 : 0x1d1014
-      });
+      const mat = new THREE.MeshStandardMaterial({ color: doorColor, roughness: 0.78, emissive: 0x1d1014 });
       const geometry = horizontal
         ? new THREE.BoxGeometry(leafWidth, h, t * 0.82)
         : new THREE.BoxGeometry(t * 0.82, h, leafWidth);
@@ -158,29 +155,26 @@ export class Renderer3D {
       const closed = horizontal
         ? { x: x + offset, y: h / 2, z }
         : { x, y: h / 2, z: z + offset };
-      const target = { ...closed, rotY: 0 };
-      if (isOpen) {
-        const outward = side === 'north' ? -1 : side === 'south' ? 1 : side === 'west' ? -1 : 1;
-        if (horizontal) {
-          target.x += sign * leafWidth * 0.96;
-          target.z += outward * (t * 1.35);
-          target.rotY = -outward * sign * Math.PI * 0.42;
-        } else {
-          target.z += sign * leafWidth * 0.96;
-          target.x += outward * (t * 1.35);
-          target.rotY = outward * sign * Math.PI * 0.42;
-        }
-      }
       door.position.set(closed.x, closed.y, closed.z);
       door.rotation.y = 0;
       door.userData.texturePath = doorTexture;
-      door.userData.targetX = target.x;
-      door.userData.targetY = target.y;
-      door.userData.targetZ = target.z;
-      door.userData.targetRotY = target.rotY;
+      door.userData.baseColor = doorColor;
       door.userData.isDoor = true;
+      door.userData.side = side;
+      door.userData.sign = sign;
+      door.userData.horizontal = horizontal;
+      door.userData.leafWidth = leafWidth;
+      door.userData.thickness = t;
+      door.userData.closedX = closed.x;
+      door.userData.closedY = closed.y;
+      door.userData.closedZ = closed.z;
+      door.userData.targetX = closed.x;
+      door.userData.targetY = closed.y;
+      door.userData.targetZ = closed.z;
+      door.userData.targetRotY = 0;
       this.doorMeshes.push(door);
       this.mapGroup.add(door);
+      this.applyDoorState(door, { open: isOpen, locked: isLocked }, doorColor);
     };
 
     const makeDoor = (side, x, z) => {
@@ -219,6 +213,73 @@ export class Renderer3D {
     } else makeWall(cx + w / 2, h / 2, cz, t, h, d);
   }
 
+  computeDoorTarget(door, info = {}) {
+    const open = Boolean(info.open);
+    const side = door.userData.side;
+    const sign = Number(door.userData.sign ?? 1);
+    const horizontal = Boolean(door.userData.horizontal);
+    const leafWidth = Number(door.userData.leafWidth ?? 2.5);
+    const t = Number(door.userData.thickness ?? 1);
+    const target = {
+      x: Number(door.userData.closedX ?? door.position.x),
+      y: Number(door.userData.closedY ?? door.position.y),
+      z: Number(door.userData.closedZ ?? door.position.z),
+      rotY: 0
+    };
+    if (!open) return target;
+    const outward = side === 'north' ? -1 : side === 'south' ? 1 : side === 'west' ? -1 : 1;
+    if (horizontal) {
+      target.x += sign * leafWidth * 0.96;
+      target.z += outward * (t * 1.75);
+      target.rotY = -outward * sign * Math.PI * 0.46;
+    } else {
+      target.z += sign * leafWidth * 0.96;
+      target.x += outward * (t * 1.75);
+      target.rotY = outward * sign * Math.PI * 0.46;
+    }
+    return target;
+  }
+
+  applyDoorState(door, info = {}, fallbackColor = 0x8a6f4d) {
+    const open = Boolean(info.open);
+    const locked = Boolean(info.locked);
+    const target = this.computeDoorTarget(door, info);
+    door.userData.targetX = target.x;
+    door.userData.targetY = target.y;
+    door.userData.targetZ = target.z;
+    door.userData.targetRotY = target.rotY;
+    const baseColor = Number(door.userData.baseColor ?? fallbackColor);
+    if (door.material?.color) door.material.color.setHex(locked ? 0x91526a : open ? 0x5d8f72 : baseColor);
+    if (door.material?.emissive) door.material.emissive.setHex(open ? 0x102819 : 0x1d1014);
+  }
+
+  syncDoors(doors = {}) {
+    if (!this.doorMeshes.length) return;
+    for (const door of this.doorMeshes) {
+      this.applyDoorState(door, doors?.[door.userData.side] ?? { open: false, locked: false });
+    }
+  }
+
+  setObjectTarget(mesh, x, y, z, snapDistance = 18) {
+    const dx = mesh.position.x - x;
+    const dy = mesh.position.y - y;
+    const dz = mesh.position.z - z;
+    const shouldSnap = mesh.userData.targetX == null || (dx * dx + dy * dy + dz * dz) > snapDistance * snapDistance;
+    mesh.userData.targetX = x;
+    mesh.userData.targetY = y;
+    mesh.userData.targetZ = z;
+    if (shouldSnap) mesh.position.set(x, y, z);
+  }
+
+  applyObjectTargets(map, factor = 0.28) {
+    for (const mesh of map.values()) {
+      if (mesh.userData.targetX == null) continue;
+      mesh.position.x += (mesh.userData.targetX - mesh.position.x) * factor;
+      mesh.position.y += (mesh.userData.targetY - mesh.position.y) * factor;
+      mesh.position.z += (mesh.userData.targetZ - mesh.position.z) * factor;
+    }
+  }
+
   setVisible(value) {
     this.visible = Boolean(value);
     this.renderer.domElement.style.display = this.visible ? 'block' : 'none';
@@ -240,10 +301,12 @@ export class Renderer3D {
   }
 
   setWorldState(state, myId) {
+    this.worldCleared = false;
     this.latestState = state;
     this.myId = String(myId);
     const mode = state.mode ?? { type: 'menu' };
     this.rebuildArena(mode);
+    this.syncDoors(mode?.currentRoom?.doors ?? {});
     this.syncPlayers(state.players ?? [], myId);
     this.syncEnemies(mode.enemies ?? []);
     this.syncCrates(mode.crates ?? []);
@@ -340,20 +403,25 @@ export class Renderer3D {
   }
 
   syncPortal(portal) {
-    if (this.portalMesh) {
-      this.scene.remove(this.portalMesh);
-      disposeObject(this.portalMesh);
-      this.portalMesh = null;
+    if (!portal?.active) {
+      if (this.portalMesh) {
+        this.scene.remove(this.portalMesh);
+        disposeObject(this.portalMesh);
+        this.portalMesh = null;
+      }
+      this.deleteLabel('portal');
+      return;
     }
-    const portalLabel = this.labels.get('portal');
-    if (portalLabel) { portalLabel.el.remove(); this.labels.delete('portal'); }
-    if (!portal?.active) return;
-    const torus = new THREE.Mesh(new THREE.TorusGeometry(1.8, 0.14, 12, 32), new THREE.MeshStandardMaterial({ color: 0x79f2ff, emissive: 0x205b66 }));
-    torus.position.set(portal.x, 0.12, portal.z);
-    torus.rotation.x = Math.PI / 2;
-    this.portalMesh = torus;
-    this.scene.add(torus);
-    this.setLabel('portal', () => `<b>Портал</b><small>E — голосовать ${portal.votes?.length ?? 0}/${portal.required?.length ?? '?'}</small>`, torus, 2.0);
+    if (!this.portalMesh) {
+      this.portalMesh = new THREE.Mesh(
+        new THREE.TorusGeometry(1.8, 0.14, 12, 32),
+        new THREE.MeshStandardMaterial({ color: 0x79f2ff, emissive: 0x205b66 })
+      );
+      this.portalMesh.rotation.x = Math.PI / 2;
+      this.scene.add(this.portalMesh);
+    }
+    this.portalMesh.position.set(portal.x, 0.12, portal.z);
+    this.setLabel('portal', () => `<b>Портал</b><small>E — голосовать ${portal.votes?.length ?? 0}/${portal.required?.length ?? '?'}</small>`, this.portalMesh, 2.0);
   }
 
   removeObject(id, mesh, map) {
@@ -406,7 +474,7 @@ export class Renderer3D {
     }
     mesh.userData.entity = player;
     mesh.visible = player.alive || player.downed || player.spectator;
-    mesh.position.set(player.x, 0, player.z);
+    this.setObjectTarget(mesh, player.x, 0, player.z, 18);
     mesh.rotation.y = -player.rot;
     mesh.scale.set(1, player.downed ? 0.32 : 1, 1);
     for (const child of mesh.children) {
@@ -453,8 +521,7 @@ export class Renderer3D {
       this.scene.add(mesh);
     }
     mesh.userData.entity = enemy;
-    mesh.position.x = enemy.x;
-    mesh.position.z = enemy.z;
+    this.setObjectTarget(mesh, enemy.x, 0, enemy.z, enemy.kind === 'boss' ? 22 : 16);
     mesh.rotation.y = -Number(enemy.rot ?? 0);
     this.setLabel(enemy.id, () => `<b>${enemy.name ?? enemy.type}</b>${hpBar(enemy.hp, enemy.maxHp)}<small>${enemy.hp}/${enemy.maxHp} HP${enemy.kind === 'boss' ? ` · стадия ${enemy.stage ?? 1}` : ''}${enemy.statusEffects?.length ? ` · ${enemy.statusEffects.map((e) => e.name ?? e.id).join(', ')}` : ''}${enemy.ability ? ` · ${enemy.ability}: ${Number(enemy.abilityCooldown ?? 0).toFixed(1)}с` : ''}</small>`, mesh, enemy.kind === 'boss' ? 3.5 : 2.0);
   }
@@ -473,7 +540,7 @@ export class Renderer3D {
       this.crateMeshes.set(crate.id, mesh);
       this.scene.add(mesh);
     }
-    mesh.position.set(crate.x, 0, crate.z);
+    this.setObjectTarget(mesh, crate.x, 0, crate.z, 12);
   }
 
   upsertDrop(drop) {
@@ -490,7 +557,7 @@ export class Renderer3D {
       this.dropMeshes.set(drop.id, mesh);
       this.scene.add(mesh);
     }
-    mesh.position.set(drop.x, 0.25, drop.z);
+    this.setObjectTarget(mesh, drop.x, 0.25, drop.z, 12);
     mesh.rotation.y += 0.05;
     const me = this.latestState?.players?.find((player) => player.id === this.myId);
     const near = me && Math.hypot((me.x ?? 0) - drop.x, (me.z ?? 0) - drop.z) <= 3.0;
@@ -513,7 +580,7 @@ export class Renderer3D {
       this.projectileMeshes.set(projectile.id, mesh);
       this.scene.add(mesh);
     }
-    mesh.position.set(projectile.x, 0.45, projectile.z);
+    this.setObjectTarget(mesh, projectile.x, 0.45, projectile.z, 8);
   }
 
   deleteLabel(id) {
@@ -567,6 +634,11 @@ export class Renderer3D {
     if (this.destroyed) return;
     this.animationFrameId = requestAnimationFrame(() => this.animate());
     if (this.portalMesh) this.portalMesh.rotation.z += 0.015;
+    this.applyObjectTargets(this.playerMeshes, 0.35);
+    this.applyObjectTargets(this.enemyMeshes, 0.32);
+    this.applyObjectTargets(this.crateMeshes, 0.3);
+    this.applyObjectTargets(this.dropMeshes, 0.25);
+    this.applyObjectTargets(this.projectileMeshes, 0.55);
     for (const door of this.doorMeshes) {
       door.position.x += ((door.userData.targetX ?? door.position.x) - door.position.x) * 0.08;
       door.position.y += ((door.userData.targetY ?? door.position.y) - door.position.y) * 0.08;
@@ -578,6 +650,8 @@ export class Renderer3D {
   }
 
   clearWorld() {
+    if (this.worldCleared) return;
+    this.worldCleared = true;
     this.clearGroup(this.mapGroup);
     for (const [id, mesh] of this.playerMeshes) this.removeObject(id, mesh, this.playerMeshes);
     for (const [id, mesh] of this.enemyMeshes) this.removeObject(id, mesh, this.enemyMeshes);

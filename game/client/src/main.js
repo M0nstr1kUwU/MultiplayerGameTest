@@ -154,7 +154,7 @@ function startGameSession(user) {
     if (!local?.alive) return;
     const angle = renderer.getAimAngle(local);
     socket.emit('player:input', input.snapshot(angle));
-  }, 1000 / 30);
+  }, 1000 / 20);
 }
 
 async function bootstrap() {

@@ -63,13 +63,14 @@ await app.register(leaderboardRoutes, { db });
 
 app.get('/api/health', async () => ({ ok: true, time: Date.now() }));
 
+const tickRate = Math.max(10, Math.min(30, Number(process.env.TICK_RATE ?? 20)));
 let last = performance.now();
 setInterval(() => {
   const now = performance.now();
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const dt = Math.min(0.08, (now - last) / 1000);
   last = now;
   game.tick(dt);
-}, 1000 / 30);
+}, 1000 / tickRate);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

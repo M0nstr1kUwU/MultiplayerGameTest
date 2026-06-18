@@ -97,3 +97,12 @@ Production-клиент больше не обращается к `localhost:300
 - Снаряды теперь синхронизируются по id, а не пересоздаются полностью каждый кадр сервера.
 
 Подробнее: `docs/OPTIMIZATION_NOTES.md`.
+
+## v12 Optimization Update
+
+- `TICK_RATE=20` by default for lighter Render/network load.
+- Client interpolates object positions instead of hard-snapping every server snapshot.
+- HUD is updated by small DOM patches; weapon icons are refreshed only when inventory composition changes.
+- Portal and door objects are updated in-place instead of being recreated each tick/state change.
+- PvE room transitions are cooperative: all alive players must stand near the same door for 1 second.
+
