@@ -57,7 +57,7 @@ npm install && npm run build
 npm start
 ```
 
-Полное руководство: [`Deployment.md`](wiki/Deployment.md).
+## [Полное руководство](https://github.com/M0nstr1kUwU/MultiplayerGameTest/wiki).
 
 ## Документация
 
