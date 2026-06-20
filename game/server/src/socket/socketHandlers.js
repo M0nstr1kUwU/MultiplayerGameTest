@@ -161,6 +161,11 @@ export function registerSocketHandlers(io, { authService, game, logger }) {
       }
     });
 
+    socket.on('world:resync', (ack) => {
+      const applied = game.resyncWorld(socket.user.id, socket);
+      ok(ack, { applied });
+    });
+
     socket.on('disconnect', () => {
       game.leave(socket.user.id);
       game.broadcastLobbyList();

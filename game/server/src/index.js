@@ -69,7 +69,7 @@ setInterval(() => {
   const now = performance.now();
   const dt = Math.min(0.08, (now - last) / 1000);
   last = now;
-  game.tick(dt);
+  void game.tick(dt).catch((error) => app.log.error({ err: error }, 'game tick failed'));
 }, 1000 / tickRate);
 
 const __filename = fileURLToPath(import.meta.url);

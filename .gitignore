@@ -1,4 +1,10 @@
 game/node_modules
-docs/
 game/server/.data/local-db.json
 game/.env.example
+game/client/dist/
+game/server/client-dist/
+game/server/.data/
+game/.env
+game/*.log
+game/.DS_Store
+docs/

@@ -1,10 +1,12 @@
 const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:3000' : '');
 
 export async function api(path, options = {}) {
+  const headers = { ...(options.headers ?? {}) };
+  if (options.body != null && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) }
+    headers
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message ?? 'Запрос не выполнен');

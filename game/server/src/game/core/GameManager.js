@@ -2,6 +2,7 @@ import { applyPlayerStyle, createPlayerState, serializePlayerForLobby, serialize
 import { clamp } from './math.js';
 import { PvPMode } from '../modes/PvPMode.js';
 import { PvEMode } from '../modes/PvEMode.js';
+import { WorldReplicator } from './WorldReplicator.js';
 
 const MODES = new Set(['pvp', 'pve']);
 const MAX_PLAYERS = 8;
@@ -59,6 +60,8 @@ export class GameManager {
     this.hooks = hooks;
     this.lobbies = new Map();
     this.playerLobby = new Map();
+    this.tickInProgress = false;
+    this.networkRate = Math.max(5, Math.min(20, Number(process.env.NETWORK_RATE ?? 10)));
   }
 
   createLobby(leader, requestedMode = 'pve', options = {}) {
@@ -72,6 +75,7 @@ export class GameManager {
       maxPlayers: MAX_PLAYERS,
       players: new Map(),
       modeInstance: null,
+      network: { accumulator: 0, replicator: new WorldReplicator() },
       createdAt: Date.now()
     };
 
@@ -181,7 +185,9 @@ export class GameManager {
       : new PvEMode(this.createMatchFacade(lobby));
 
     await lobby.modeInstance.start();
+    lobby.network = { accumulator: 0, replicator: new WorldReplicator() };
     this.io.to(lobby.id).emit('match:started', this.serializeLobby(lobby));
+    this.emitWorldBootstrap(lobby);
     this.broadcastLobby(lobby);
     this.broadcastLobbyList();
   }
@@ -210,13 +216,50 @@ export class GameManager {
     return lobby.modeInstance.chooseUpgrade?.(player, choiceId) ?? false;
   }
 
-  tick(dt) {
-    for (const lobby of this.lobbies.values()) {
-      if (lobby.status === 'playing' && lobby.modeInstance) {
-        lobby.modeInstance.update(dt).catch((error) => console.error('[mode update]', error));
-        this.io.to(lobby.id).emit('world:state', this.serializeWorld(lobby));
+  async tick(dt) {
+    // Avoid overlapping async simulation ticks on a slow server.
+    if (this.tickInProgress) return;
+    this.tickInProgress = true;
+    try {
+      for (const lobby of this.lobbies.values()) {
+        if (lobby.status !== 'playing' || !lobby.modeInstance) continue;
+        await lobby.modeInstance.update(dt);
+        this.emitWorldDelta(lobby, dt);
       }
+    } finally {
+      this.tickInProgress = false;
     }
+  }
+
+  emitWorldBootstrap(lobby, target = null) {
+    if (!lobby?.modeInstance) return;
+    lobby.network ??= { accumulator: 0, replicator: new WorldReplicator() };
+    const payload = lobby.network.replicator.createBootstrap(this.serializeWorld(lobby));
+    if (target) target.emit('world:bootstrap', payload);
+    else this.io.to(lobby.id).emit('world:bootstrap', payload);
+  }
+
+  emitWorldDelta(lobby, dt) {
+    lobby.network ??= { accumulator: 0, replicator: new WorldReplicator() };
+    lobby.network.accumulator += dt;
+    const interval = 1 / this.networkRate;
+    if (lobby.network.accumulator < interval) return;
+    lobby.network.accumulator %= interval;
+
+    const payload = lobby.network.replicator.createDelta(this.serializeWorld(lobby));
+    if (!payload) return;
+    if (payload.bootstrap) {
+      this.io.to(lobby.id).emit('world:bootstrap', payload.bootstrap);
+      return;
+    }
+    this.io.to(lobby.id).emit('world:delta', payload);
+  }
+
+  resyncWorld(userId, socket) {
+    const lobby = this.findLobbyByUser(userId);
+    if (!lobby || lobby.status !== 'playing' || !lobby.modeInstance) return false;
+    this.emitWorldBootstrap(lobby, socket);
+    return true;
   }
 
   createMatchFacade(lobby) {
@@ -258,6 +301,7 @@ export class GameManager {
       if (!this.lobbies.has(lobby.id)) return;
       lobby.status = 'lobby';
       lobby.modeInstance = null;
+      lobby.network = { accumulator: 0, replicator: new WorldReplicator() };
       for (const player of lobby.players.values()) {
         const fresh = createPlayerState(player, player.socketId);
         Object.assign(player, fresh, { id: player.id, username: player.username, socketId: player.socketId, color: player.color });

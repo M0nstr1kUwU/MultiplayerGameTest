@@ -5,6 +5,7 @@ import { authApi } from './net/api.js';
 import { createGameSocket } from './net/socket.js';
 import { Renderer3D } from './game/Renderer3D.js';
 import { createInput } from './game/input.js';
+import { WorldStore } from './game/WorldStore.js';
 
 const root = document.querySelector('#app');
 let socket = null;
@@ -16,6 +17,8 @@ let me = null;
 let canSendInput = false;
 let settingsOpen = false;
 let settingsEl = null;
+let worldStore = new WorldStore();
+let resyncInFlight = false;
 
 function stopSession() {
   canSendInput = false;
@@ -32,6 +35,8 @@ function stopSession() {
   settingsEl?.remove?.();
   settingsEl = null;
   me = null;
+  worldStore.clear();
+  resyncInFlight = false;
 }
 
 function showAuth() {
@@ -138,13 +143,30 @@ function startGameSession(user) {
   socket.on('match:started', () => { canSendInput = true; });
   socket.on('match:finished', () => { canSendInput = false; renderer?.setVisible(false); });
 
-  socket.on('world:state', (state) => {
+  const renderReplicatedWorld = () => {
+    const state = worldStore.getState();
     const playing = state?.lobby?.status === 'playing';
     canSendInput = playing && !settingsOpen;
     renderer.setVisible(playing);
     if (playing) renderer.setWorldState(state, me.id);
     else renderer.clearWorld?.();
     lobbyView?.setWorldState(state);
+  };
+
+  socket.on('world:bootstrap', (payload) => {
+    if (!worldStore.loadBootstrap(payload)) return;
+    resyncInFlight = false;
+    renderReplicatedWorld();
+  });
+
+  socket.on('world:delta', (payload) => {
+    const result = worldStore.applyDelta(payload);
+    if (result.resync && !resyncInFlight) {
+      resyncInFlight = true;
+      socket.emit('world:resync', () => { resyncInFlight = false; });
+      return;
+    }
+    if (result.applied) renderReplicatedWorld();
   });
 
   inputTimer = setInterval(() => {
