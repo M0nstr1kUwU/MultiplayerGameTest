@@ -61,14 +61,12 @@ npm start
 
 ## Документация
 
-- [Начало работы и карта Wiki](wiki/Home.md)
-- [Как сервер и клиент обмениваются данными](wiki/Networking.md)
-- [Как устроен проект](wiki/Architecture.md)
-- [Игровые системы](wiki/Gameplay.md)
-- [Пользователи, сессии и база данных](wiki/Data.md)
-- [Будущие моды и хуки](wiki/Modding.md)
-- [Публикация на Render](wiki/Deployment.md)
-- [Иконки, модели и анимации](wiki/Assets-and-Animation.md)
+- [Начало работы и карта Wiki](https://github.com/M0nstr1kUwU/MultiplayerGameTest/wiki/Home/)
+- [Как сервер и клиент обмениваются данными](https://github.com/M0nstr1kUwU/MultiplayerGameTest/wiki/Networking/)
+- [Как устроен проект](https://github.com/M0nstr1kUwU/MultiplayerGameTest/wiki/Architecture/)
+- [Игровые системы](https://github.com/M0nstr1kUwU/MultiplayerGameTest/wiki/Gameplay/)
+- [Пользователи, сессии и база данных](https://github.com/M0nstr1kUwU/MultiplayerGameTest/wiki/Data/)
+- [Будущие моды и хуки](https://github.com/M0nstr1kUwU/MultiplayerGameTest/wiki/Modding/)
 - [План работ](KANBAN.md)
 
 ## Структура проекта
