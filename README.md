@@ -1,4 +1,7 @@
 # Soul Knight 3D — multiplayer prototype
+```copy
+https://multiplayergametest.onrender.com
+```
 
 Браузерная кооперативная 3D-игра в духе Soul Knight на **Three.js + Socket.IO + Fastify**.
 
